@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.orchestrator
+    container_name: athlete_orchestrator
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama
+      - rag-worker
+      - metric-worker
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3:3b
+      - OLLAMA_NUM_CTX=1024
+      - OLLAMA_MAX_TOKENS=256
+      - OLLAMA_TEMPERATURE=0.2
+      - BIOMECHANICS_URL=http://biomechanics-worker:8001/audit-form
+      - RAG_WORKER_URL=http://rag-worker:8002/fuel-plan
+      - OVERLOAD_URL=http://metric-worker:8003/overload-plan
+    restart: unless-stopped
+
+  rag-worker:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.trainers
+    container_name: rag_worker
+    command: python trainers/nutrition_trainer.py
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./athlete_chroma_db:/app/athlete_chroma_db
+
+  metric-worker:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.trainers
+    container_name: metric_worker
+    command: python trainers/overload_trainer.py
+    ports:
+      - "8003:8003"
+    restart: unless-stopped
+
+  biomechanics-worker:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.trainers
+    container_name: biomechanics_worker
+    command: python trainers/biomechanics_trainer.py
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+  ui:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.ui
+    container_name: athlete_ui
+    ports:
+      - "8501:8501"
+    depends_on:
+      - orchestrator
+
+volumes:
+  ollama_storage:
